@@ -1,4 +1,4 @@
-name: '📦 حرفه‌ای: دانلود و ذخیره در مخزن'
+name: '📦 حرفه‌ای: دانلود و ذخیره در مخزن (حفظ نام و فرمت)'
 
 on:
   workflow_dispatch:
@@ -19,7 +19,7 @@ on:
         default: '95m'
 
 permissions:
-  contents: write  # مهم: اجازه پوش به مخزن
+  contents: write
 
 jobs:
   download-and-commit:
@@ -31,29 +31,29 @@ jobs:
       - name: ⚙️ نصب ابزارها
         run: |
           sudo apt-get update
-          sudo apt-get install -y p7zip-full file
+          sudo apt-get install -y p7zip-full file bc
 
-      - name: 📥 دانلود فایل
+      - name: 📥 دانلود فایل با نام اصلی
         id: download
         run: |
           URL="${{ github.event.inputs.file_url }}"
-          echo "در حال دانلود از: $URL"
-          curl -L --fail --retry 5 --retry-delay 5 --progress-bar -o downloaded_file "$URL"
-          if [ $? -ne 0 ]; then exit 1; fi
-          ls -lh downloaded_file
+          RAW_NAME=$(basename "$URL" | sed 's/\?.*//' | sed 's/%20/ /g')
+          [ -z "$RAW_NAME" ] && RAW_NAME="unknown_file"
+          SAFE_NAME=$(echo "$RAW_NAME" | sed 's/[\\/:*?"<>|]/_/g')
+          echo "SAFE_NAME=$SAFE_NAME" >> $GITHUB_ENV
+          
+          echo "در حال دانلود: $SAFE_NAME"
+          curl -L --fail --retry 5 --retry-delay 5 --progress-bar -o "$SAFE_NAME" "$URL"
+          FILE_SIZE=$(stat -c%s "$SAFE_NAME")
+          echo "FILE_SIZE=$FILE_SIZE" >> $GITHUB_ENV
+          echo "حجم فایل: $(numfmt --to=iec $FILE_SIZE)"
 
-      - name: 🧠 تشخیص نوع و استخراج نام اصلی
+      - name: 🧠 تشخیص دسته‌بندی
         id: classify
         run: |
-          # نام اصلی از لینک
-          RAW_NAME=$(basename "${{ github.event.inputs.file_url }}" | sed 's/\?.*//' | sed 's/%20/ /g')
-          if [ -z "$RAW_NAME" ]; then RAW_NAME="unknown_file"; fi
-          # حذف کاراکترهای غیرمجاز برای نام پوشه (جایگزینی با _)
-          SAFE_NAME=$(echo "$RAW_NAME" | sed 's/[\\/:*?"<>|]/_/g')
-          # تشخیص MIME
-          MIME=$(file -b --mime-type downloaded_file)
-          EXT="${RAW_NAME##*.}"
+          EXT="${SAFE_NAME##*.}"
           EXT=$(echo "$EXT" | tr '[:upper:]' '[:lower:]')
+          MIME=$(file -b --mime-type "$SAFE_NAME")
           
           if [[ "$MIME" == video/* ]] || [[ "$EXT" =~ ^(mp4|mkv|avi|mov|wmv|flv|webm)$ ]]; then
             CAT="video"
@@ -66,28 +66,49 @@ jobs:
           else
             CAT="other"
           fi
-          
           echo "CAT=$CAT" >> $GITHUB_ENV
-          echo "SAFE_NAME=$SAFE_NAME" >> $GITHUB_ENV
-          echo "✅ دسته: $CAT → زیرپوشه: $SAFE_NAME"
+          echo "✅ دسته: $CAT"
 
-      - name: 🗜️ فشرده‌سازی و تقسیم (با اعمال رمز)
+      - name: 💾 ذخیره‌سازی هوشمند (حفظ نام و فرمت)
         run: |
-          # پوشه نهایی: downloads/دسته/نام فایل/
           FINAL_DIR="downloads/${{ env.CAT }}/${{ env.SAFE_NAME }}"
           mkdir -p "$FINAL_DIR"
           
-          # حذف فایل‌های قبلی در آن زیرپوشه (در صورت وجود) تا تداخل پیش نیاید
-          rm -f "$FINAL_DIR"/*.7z*
-          
-          # فشرده‌سازی
-          if [ -z "${{ github.event.inputs.password }}" ]; then
-            7z a -mhe=on -mx=3 -v${{ github.event.inputs.split_size }} "$FINAL_DIR/archive.7z" "./downloaded_file"
+          # محاسبه حداکثر حجم به بایت (تبدیل 95m -> 99614720)
+          SPLIT_SIZE_RAW="${{ github.event.inputs.split_size }}"
+          if [[ "$SPLIT_SIZE_RAW" =~ ([0-9]+)m$ ]]; then
+            SPLIT_BYTES=$((${BASH_REMATCH[1]} * 1024 * 1024))
+          elif [[ "$SPLIT_SIZE_RAW" =~ ([0-9]+)g$ ]]; then
+            SPLIT_BYTES=$((${BASH_REMATCH[1]} * 1024 * 1024 * 1024))
           else
-            7z a -p"${{ github.event.inputs.password }}" -mhe=on -mx=3 -v${{ github.event.inputs.split_size }} "$FINAL_DIR/archive.7z" "./downloaded_file"
+            SPLIT_BYTES=$(($SPLIT_SIZE_RAW))
           fi
           
-          echo "✅ فایل در $FINAL_DIR ذخیره شد"
+          NEED_SPLIT=false
+          if [[ $FILE_SIZE -gt $SPLIT_BYTES ]]; then
+            NEED_SPLIT=true
+          fi
+          
+          if [[ -z "${{ github.event.inputs.password }}" ]] && [[ "$NEED_SPLIT" == "false" ]]; then
+            # بدون رمز و بدون نیاز به تقسیم → کپی مستقیم با نام اصلی
+            cp "${{ env.SAFE_NAME }}" "$FINAL_DIR/${{ env.SAFE_NAME }}"
+            echo "✅ فایل مستقیماً با نام اصلی ذخیره شد: $FINAL_DIR/${{ env.SAFE_NAME }}"
+          else
+            # نیاز به رمز یا تقسیم → ساخت آرشیو 7z با حفظ نام اصلی درون آرشیو
+            mkdir temp_archive
+            cp "${{ env.SAFE_NAME }}" "temp_archive/${{ env.SAFE_NAME }}"
+            cd temp_archive
+            ARCHIVE_PATH="../$FINAL_DIR/archive.7z"
+            if [[ -z "${{ github.event.inputs.password }}" ]]; then
+              7z a -mx=3 -v"${{ github.event.inputs.split_size }}" "$ARCHIVE_PATH" "${{ env.SAFE_NAME }}"
+            else
+              7z a -p"${{ github.event.inputs.password }}" -mhe=on -mx=3 -v"${{ github.event.inputs.split_size }}" "$ARCHIVE_PATH" "${{ env.SAFE_NAME }}"
+            fi
+            cd ..
+            rm -rf temp_archive
+            echo "✅ فایل در آرشیو 7z با نام اصلی ${{ env.SAFE_NAME }} ذخیره شد"
+          fi
+          
           ls -lh "$FINAL_DIR"
 
       - name: 📝 کامیت و پوش به مخزن
@@ -95,5 +116,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add downloads/
-          git commit -m "Add downloaded file: ${{ env.SAFE_NAME }} (category: ${{ env.CAT }})" || echo "Nothing to commit"
+          git commit -m "Add file: ${{ env.SAFE_NAME }} (category: ${{ env.CAT }})" || echo "Nothing to commit"
           git push
