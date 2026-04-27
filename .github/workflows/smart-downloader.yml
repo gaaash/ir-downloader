@@ -1,10 +1,10 @@
-name: '📦 حرفه‌ای: دانلود و ذخیره در مخزن (حفظ نام و فرمت + پشتیبانی از یوتیوب)'
+name: '📦 حرفه‌ای: دانلود و ذخیره در مخزن (حفظ نام و فرمت)'
 
 on:
   workflow_dispatch:
     inputs:
       file_url:
-        description: '🔗 لینک مستقیم فایل یا لینک ویدیو یوتیوب'
+        description: '🔗 لینک مستقیم فایل'
         required: true
         type: string
       password:
@@ -17,27 +17,6 @@ on:
         required: false
         type: string
         default: '95m'
-      media_format:
-        description: '🎬 برای ویدیو: video (پیش‌فرض) | audio | کیفیت (مثل 720p, 1080p)'
-        required: false
-        type: choice
-        options:
-          - video
-          - audio
-          - 360p
-          - 480p
-          - 720p
-          - 1080p
-          - 1440p
-          - 2160p
-      embed_subs:
-        description: '📝 زیرنویس در ویدیو ذخیره شود؟ (بله/خیر)'
-        required: false
-        type: boolean
-        default: false
-
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true   # رفع مشکل Node.js 20
 
 permissions:
   contents: write
@@ -47,30 +26,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: 🔄 دریافت کد مخزن
-        uses: actions/checkout@v6     # ارتقا به نسخه‌ای که از Node.js 24 پشتیبانی می‌کند
+        uses: actions/checkout@v4
 
-      # ---------- نصب ابزارهای عمومی ----------
-      - name: ⚙️ نصب ابزارهای عمومی
+      - name: ⚙️ نصب ابزارها
         run: |
           sudo apt-get update
           sudo apt-get install -y p7zip-full file bc
 
-      # ---------- مرحله تشخیص نوع لینک ----------
-      - name: 🧠 تشخیص نوع لینک
-        id: detect_type
-        run: |
-          URL="${{ github.event.inputs.file_url }}"
-          if [[ "$URL" =~ ^(https?://)?(www\.)?(youtube\.com|youtu\.be) ]]; then
-            echo "IS_YOUTUBE=true" >> $GITHUB_ENV
-            echo "✅ لینک یوتیوب تشخیص داده شد."
-          else
-            echo "IS_YOUTUBE=false" >> $GITHUB_ENV
-            echo "✅ لینک معمولی تشخیص داده شد."
-          fi
-
-      # ---------- حالت 1: لینک معمولی ----------
-      - name: 📥[معمولی] دانلود فایل با نام اصلی
-        if: env.IS_YOUTUBE == 'false'
+      - name: 📥 دانلود فایل با نام اصلی
+        id: download
         run: |
           URL="${{ github.event.inputs.file_url }}"
           RAW_NAME=$(basename "$URL" | sed 's/\?.*//' | sed 's/%20/ /g')
@@ -83,84 +47,13 @@ jobs:
           FILE_SIZE=$(stat -c%s "$SAFE_NAME")
           echo "FILE_SIZE=$FILE_SIZE" >> $GITHUB_ENV
           echo "حجم فایل: $(numfmt --to=iec $FILE_SIZE)"
-          
-          EXT="${SAFE_NAME##*.}"
-          echo "FILE_EXT=$EXT" >> $GITHUB_ENV
 
-      # ---------- حالت 2: لینک یوتیوب (نصب yt-dlp و FFmpeg) ----------
-      - name: 🎬[یوتیوب] نصب yt-dlp و FFmpeg
-        if: env.IS_YOUTUBE == 'true'
-        uses: AnimMouse/setup-yt-dlp@v3
-        with:
-          ffmpeg: true
-          aria2: true
-          ejs-node: true
-
-      - name: 🎬[یوتیوب] دانلود ویدیو
-        if: env.IS_YOUTUBE == 'true'
-        id: youtube_download
-        run: |
-          URL="${{ github.event.inputs.file_url }}"
-          MEDIA_TYPE="${{ github.event.inputs.media_format }}"
-          EMBED_SUBS="${{ github.event.inputs.embed_subs }}"
-          
-          # ساخت نام فایل امن از عنوان ویدیو
-          yt-dlp --get-filename -o "%(title)s.%(ext)s" "$URL" > raw_name_unsafe
-          RAW_NAME=$(cat raw_name_unsafe)
-          SAFE_NAME=$(echo "$RAW_NAME" | sed 's/[\\/:*?"<>|]/_/g')
-          echo "SAFE_NAME=$SAFE_NAME" >> $GITHUB_ENV
-          
-          # ساخت دستور yt-dlp
-          CMD="yt-dlp --no-playlist -o \"$SAFE_NAME\""
-          
-          # --- تنظیمات کیفیت و فرمت ---
-          QUALITY_COMMAND=""
-          case "$MEDIA_TYPE" in
-            audio)
-              QUALITY_COMMAND="-x --audio-format mp3 --audio-quality 0"
-              ;;
-            video)
-              QUALITY_COMMAND="-f \"bestvideo+bestaudio\" --merge-output-format mp4"
-              ;;
-            360p|480p|720p|1080p|1440p|2160p)
-              RESOLUTION="${MEDIA_TYPE%p}"
-              QUALITY_COMMAND="-f \"bestvideo[height<=$RESOLUTION]+bestaudio\" --merge-output-format mp4"
-              ;;
-            *)
-              QUALITY_COMMAND="-f \"bestvideo+bestaudio\" --merge-output-format mp4"
-              ;;
-          esac
-          CMD="$CMD $QUALITY_COMMAND"
-          
-          # --- تنظیمات زیرنویس ---
-          if [[ "$EMBED_SUBS" == "true" ]]; then
-            CMD="$CMD --write-subs --sub-langs en --embed-subs"
-          fi
-          
-          # --- استفاده از aria2 برای سرعت بیشتر و نمایش پیشرفت ---
-          CMD="$CMD --external-downloader aria2c --external-downloader-args \"-x 16 -k 1M\" --progress"
-          
-          echo "دستور در حال اجرا: $CMD"
-          eval $CMD
-          
-          if [ $? -ne 0 ]; then
-            echo "❌ دانلود با خطا مواجه شد"
-            exit 1
-          fi
-          
-          FILE_SIZE=$(stat -c%s "$SAFE_NAME")
-          echo "FILE_SIZE=$FILE_SIZE" >> $GITHUB_ENV
-          echo "حجم فایل: $(numfmt --to=iec $FILE_SIZE)"
-          
-          EXT="${SAFE_NAME##*.}"
-          echo "FILE_EXT=$EXT" >> $GITHUB_ENV
-
-      # ---------- دسته‌بندی ----------
       - name: 🧠 تشخیص دسته‌بندی
         id: classify
         run: |
+          EXT="${SAFE_NAME##*.}"
+          EXT=$(echo "$EXT" | tr '[:upper:]' '[:lower:]')
           MIME=$(file -b --mime-type "$SAFE_NAME")
-          EXT=$(echo "$FILE_EXT" | tr '[:upper:]' '[:lower:]')
           
           if [[ "$MIME" == video/* ]] || [[ "$EXT" =~ ^(mp4|mkv|avi|mov|wmv|flv|webm)$ ]]; then
             CAT="video"
@@ -176,12 +69,12 @@ jobs:
           echo "CAT=$CAT" >> $GITHUB_ENV
           echo "✅ دسته: $CAT"
 
-      # ---------- ذخیره‌سازی هوشمند ----------
       - name: 💾 ذخیره‌سازی هوشمند (حفظ نام و فرمت)
         run: |
           FINAL_DIR="downloads/${{ env.CAT }}/${{ env.SAFE_NAME }}"
           mkdir -p "$FINAL_DIR"
           
+          # محاسبه حداکثر حجم به بایت (تبدیل 95m -> 99614720)
           SPLIT_SIZE_RAW="${{ github.event.inputs.split_size }}"
           if [[ "$SPLIT_SIZE_RAW" =~ ([0-9]+)m$ ]]; then
             SPLIT_BYTES=$((${BASH_REMATCH[1]} * 1024 * 1024))
@@ -197,9 +90,11 @@ jobs:
           fi
           
           if [[ -z "${{ github.event.inputs.password }}" ]] && [[ "$NEED_SPLIT" == "false" ]]; then
+            # بدون رمز و بدون نیاز به تقسیم → کپی مستقیم با نام اصلی
             cp "${{ env.SAFE_NAME }}" "$FINAL_DIR/${{ env.SAFE_NAME }}"
             echo "✅ فایل مستقیماً با نام اصلی ذخیره شد: $FINAL_DIR/${{ env.SAFE_NAME }}"
           else
+            # نیاز به رمز یا تقسیم → ساخت آرشیو 7z با حفظ نام اصلی درون آرشیو
             mkdir temp_archive
             cp "${{ env.SAFE_NAME }}" "temp_archive/${{ env.SAFE_NAME }}"
             cd temp_archive
@@ -221,9 +116,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add downloads/
-          if ! git diff --cached --quiet; then
-            git commit -m "Add file: ${{ env.SAFE_NAME }} (category: ${{ env.CAT }})"
-            git push
-          else
-            echo "Nothing to commit"
-          fi
+          git commit -m "Add file: ${{ env.SAFE_NAME }} (category: ${{ env.CAT }})" || echo "Nothing to commit"
+          git push
