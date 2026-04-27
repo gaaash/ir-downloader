@@ -36,6 +36,9 @@ on:
         type: boolean
         default: false
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true   # رفع مشکل Node.js 20
+
 permissions:
   contents: write
 
@@ -44,7 +47,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: 🔄 دریافت کد مخزن
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6     # ارتقا به نسخه‌ای که از Node.js 24 پشتیبانی می‌کند
 
       # ---------- نصب ابزارهای عمومی ----------
       - name: ⚙️ نصب ابزارهای عمومی
