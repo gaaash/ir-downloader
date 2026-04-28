@@ -74,7 +74,7 @@ jobs:
           FINAL_DIR="downloads/${{ env.CAT }}/${{ env.SAFE_NAME }}"
           mkdir -p "$FINAL_DIR"
           
-          # محاسبه حداکثر حجم به بایت (تبدیل 95m -> 99614720)
+          # تبدیل split_size به بایت
           SPLIT_SIZE_RAW="${{ github.event.inputs.split_size }}"
           if [[ "$SPLIT_SIZE_RAW" =~ ([0-9]+)m$ ]]; then
             SPLIT_BYTES=$((${BASH_REMATCH[1]} * 1024 * 1024))
@@ -89,12 +89,18 @@ jobs:
             NEED_SPLIT=true
           fi
           
+          # حالت اول: بدون رمز و بدون نیاز به split
           if [[ -z "${{ github.event.inputs.password }}" ]] && [[ "$NEED_SPLIT" == "false" ]]; then
-            # بدون رمز و بدون نیاز به تقسیم → کپی مستقیم با نام اصلی
             cp "${{ env.SAFE_NAME }}" "$FINAL_DIR/${{ env.SAFE_NAME }}"
             echo "✅ فایل مستقیماً با نام اصلی ذخیره شد: $FINAL_DIR/${{ env.SAFE_NAME }}"
+          
+          # حالت دوم: با رمز ولی بدون نیاز به split (تک‌تکه با نام اصلی)
+          elif [[ -n "${{ github.event.inputs.password }}" ]] && [[ "$NEED_SPLIT" == "false" ]]; then
+            7z a -p"${{ github.event.inputs.password }}" -mhe=on -mx=3 "$FINAL_DIR/${{ env.SAFE_NAME }}.7z" "${{ env.SAFE_NAME }}"
+            echo "✅ فایل رمزگذاری شده به صورت تک‌تکه با نام ${{ env.SAFE_NAME }}.7z ذخیره شد"
+          
+          # حالت سوم: نیاز به split (با یا بدون رمز) → آرشیو چندتکه با命名 پیش‌فرض
           else
-            # نیاز به رمز یا تقسیم → ساخت آرشیو 7z با حفظ نام اصلی درون آرشیو
             mkdir temp_archive
             cp "${{ env.SAFE_NAME }}" "temp_archive/${{ env.SAFE_NAME }}"
             cd temp_archive
@@ -106,7 +112,7 @@ jobs:
             fi
             cd ..
             rm -rf temp_archive
-            echo "✅ فایل در آرشیو 7z با نام اصلی ${{ env.SAFE_NAME }} ذخیره شد"
+            echo "✅ فایل در آرشیو چندتکه (archive.7z.001, ...) با نام اصلی درون آرشیو ذخیره شد"
           fi
           
           ls -lh "$FINAL_DIR"
