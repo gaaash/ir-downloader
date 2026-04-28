@@ -1,14 +1,14 @@
-name: '📦 حرفه‌ای: دانلود و ذخیره در مخزن (حفظ نام و فرمت) - پشتیبانی از چند لینک'
+name: '📦 حرفه‌ای: دانلود و ذخیره در مخزن (حفظ نام و فرمت)'
 
 on:
   workflow_dispatch:
     inputs:
       file_url:
-        description: '🔗 لینک مستقیم فایل (برای چند لینک با کاما جدا کنید، مثال: url1, url2, url3)'
+        description: '🔗 لینک مستقیم فایل'
         required: true
         type: string
       password:
-        description: '🔐 رمز فایل فشرده (اختیاری - برای همه فایل‌ها یکسان)'
+        description: '🔐 رمز فایل فشرده (اختیاری)'
         required: false
         type: string
         default: ''
@@ -19,7 +19,7 @@ on:
         default: '95m'
 
 env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true   # رفع اخطار Node.js 20
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 permissions:
   contents: write
@@ -29,143 +29,108 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: 🔄 دریافت کد مخزن
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6     # ارتقا به نسخه پشتیبان Node.js 24
 
       - name: ⚙️ نصب ابزارها
         run: |
           sudo apt-get update
           sudo apt-get install -y p7zip-full file bc
 
-      - name: 📥 دانلود و پردازش تمام لینک‌ها
-        id: process_all
+      - name: 📥 دانلود فایل با نام اصلی
+        id: download
         run: |
-          # تابع دانلود و ذخیره یک فایل
-          process_single_url() {
-            local URL="$1"
-            local PASSWORD="$2"
-            local SPLIT_SIZE="$3"
-            
-            echo "============================================"
-            echo "🔗 شروع پردازش لینک: $URL"
-            
-            # استخراج نام فایل از لینک
-            RAW_NAME=$(basename "$URL" | sed 's/\?.*//' | sed 's/%20/ /g')
-            [ -z "$RAW_NAME" ] && RAW_NAME="unknown_file"
-            SAFE_NAME=$(echo "$RAW_NAME" | sed 's/[\\/:*?"<>|]/_/g')
-            
-            # دانلود فایل
-            echo "📥 در حال دانلود: $SAFE_NAME"
-            curl -L --fail --retry 3 --retry-delay 3 --progress-bar -o "$SAFE_NAME" "$URL"
-            if [ $? -ne 0 ]; then
-              echo "❌ خطا در دانلود $SAFE_NAME - ادامه به لینک بعدی"
-              return 1
-            fi
-            
-            FILE_SIZE=$(stat -c%s "$SAFE_NAME")
-            echo "✅ دانلود شد: $SAFE_NAME (حجم: $(numfmt --to=iec $FILE_SIZE))"
-            
-            # تشخیص دسته‌بندی
-            EXT="${SAFE_NAME##*.}"
-            EXT=$(echo "$EXT" | tr '[:upper:]' '[:lower:]')
-            MIME=$(file -b --mime-type "$SAFE_NAME")
-            
-            if [[ "$MIME" == video/* ]] || [[ "$EXT" =~ ^(mp4|mkv|avi|mov|wmv|flv|webm)$ ]]; then
-              CAT="video"
-            elif [[ "$MIME" == audio/* ]] || [[ "$EXT" =~ ^(mp3|wav|ogg|flac|m4a)$ ]]; then
-              CAT="audio"
-            elif [[ "$MIME" == image/* ]] || [[ "$EXT" =~ ^(jpg|jpeg|png|gif|bmp|webp)$ ]]; then
-              CAT="image"
-            elif [[ "$MIME" == application/pdf ]] || [[ "$EXT" =~ ^(pdf|doc|docx|xls|xlsx|ppt|pptx|txt)$ ]]; then
-              CAT="document"
-            else
-              CAT="other"
-            fi
-            echo "📁 دسته: $CAT"
-            
-            # ساخت نام پایه پوشه (بدون پسوند)
-            BASE_NAME="${SAFE_NAME%.*}"
-            if [[ "$BASE_NAME" == "$SAFE_NAME" ]]; then
-              BASE_NAME="$SAFE_NAME"
-            fi
-            
-            FINAL_DIR="downloads/$CAT/$BASE_NAME"
-            mkdir -p "$FINAL_DIR"
-            
-            # محاسبه نیاز به split
-            SPLIT_SIZE_RAW="$SPLIT_SIZE"
-            if [[ "$SPLIT_SIZE_RAW" =~ ([0-9]+)m$ ]]; then
-              SPLIT_BYTES=$((${BASH_REMATCH[1]} * 1024 * 1024))
-            elif [[ "$SPLIT_SIZE_RAW" =~ ([0-9]+)g$ ]]; then
-              SPLIT_BYTES=$((${BASH_REMATCH[1]} * 1024 * 1024 * 1024))
-            else
-              SPLIT_BYTES=$(($SPLIT_SIZE_RAW))
-            fi
-            
-            NEED_SPLIT=false
-            if [[ $FILE_SIZE -gt $SPLIT_BYTES ]]; then
-              NEED_SPLIT=true
-            fi
-            
-            # ذخیره‌سازی بر اساس شرایط
-            if [[ -z "$PASSWORD" ]] && [[ "$NEED_SPLIT" == "false" ]]; then
-              cp "$SAFE_NAME" "$FINAL_DIR/$SAFE_NAME"
-              echo "✅ فایل مستقیماً با نام کامل ذخیره شد: $FINAL_DIR/$SAFE_NAME"
-            elif [[ -n "$PASSWORD" ]] && [[ "$NEED_SPLIT" == "false" ]]; then
-              7z a -p"$PASSWORD" -mhe=on -mx=3 "$FINAL_DIR/$BASE_NAME.7z" "$SAFE_NAME"
-              echo "✅ فایل رمزگذاری شده به صورت تک‌تکه: $FINAL_DIR/$BASE_NAME.7z"
-            else
-              mkdir temp_archive
-              cp "$SAFE_NAME" "temp_archive/$SAFE_NAME"
-              cd temp_archive
-              ARCHIVE_PATH="../$FINAL_DIR/archive.7z"
-              if [[ -z "$PASSWORD" ]]; then
-                7z a -mx=3 -v"$SPLIT_SIZE" "$ARCHIVE_PATH" "$SAFE_NAME"
-              else
-                7z a -p"$PASSWORD" -mhe=on -mx=3 -v"$SPLIT_SIZE" "$ARCHIVE_PATH" "$SAFE_NAME"
-              fi
-              cd ..
-              rm -rf temp_archive
-              echo "✅ فایل در آرشیو چندتکه (archive.7z.001, ...) ذخیره شد"
-            fi
-            
-            # پاک کردن فایل موقت
-            rm -f "$SAFE_NAME"
-            echo "✅ پردازش $SAFE_NAME با موفقیت به پایان رسید"
-            return 0
-          }
+          URL="${{ github.event.inputs.file_url }}"
+          RAW_NAME=$(basename "$URL" | sed 's/\?.*//' | sed 's/%20/ /g')
+          [ -z "$RAW_NAME" ] && RAW_NAME="unknown_file"
+          SAFE_NAME=$(echo "$RAW_NAME" | sed 's/[\\/:*?"<>|]/_/g')
+          echo "SAFE_NAME=$SAFE_NAME" >> $GITHUB_ENV
           
-          # تبدیل ورودی به آرایه با جداکننده کاما
-          IFS=',' read -ra URLS <<< "${{ github.event.inputs.file_url }}"
-          SUCCESS_COUNT=0
-          FAIL_COUNT=0
+          echo "در حال دانلود: $SAFE_NAME"
+          curl -L --fail --retry 5 --retry-delay 5 --progress-bar -o "$SAFE_NAME" "$URL"
+          FILE_SIZE=$(stat -c%s "$SAFE_NAME")
+          echo "FILE_SIZE=$FILE_SIZE" >> $GITHUB_ENV
+          echo "حجم فایل: $(numfmt --to=iec $FILE_SIZE)"
+
+      - name: 🧠 تشخیص دسته‌بندی
+        id: classify
+        run: |
+          EXT="${SAFE_NAME##*.}"
+          EXT=$(echo "$EXT" | tr '[:upper:]' '[:lower:]')
+          MIME=$(file -b --mime-type "$SAFE_NAME")
           
-          for URL_ITEM in "${URLS[@]}"; do
-            # حذف فاصله‌های اضافی دور لینک
-            URL_TRIMMED=$(echo "$URL_ITEM" | xargs)
-            if [[ -z "$URL_TRIMMED" ]]; then
-              continue
-            fi
-            if process_single_url "$URL_TRIMMED" "${{ github.event.inputs.password }}" "${{ github.event.inputs.split_size }}"; then
-              ((SUCCESS_COUNT++))
-            else
-              ((FAIL_COUNT++))
-            fi
-          done
-          
-          echo "============================================"
-          echo "📊 خلاصه: موفق=$SUCCESS_COUNT | ناموفق=$FAIL_COUNT"
-          if [[ $FAIL_COUNT -gt 0 ]]; then
-            echo "⚠️ برخی لینک‌ها با خطا مواجه شدند، اما فرآیند ادامه یافت."
+          if [[ "$MIME" == video/* ]] || [[ "$EXT" =~ ^(mp4|mkv|avi|mov|wmv|flv|webm)$ ]]; then
+            CAT="video"
+          elif [[ "$MIME" == audio/* ]] || [[ "$EXT" =~ ^(mp3|wav|ogg|flac|m4a)$ ]]; then
+            CAT="audio"
+          elif [[ "$MIME" == image/* ]] || [[ "$EXT" =~ ^(jpg|jpeg|png|gif|bmp|webp)$ ]]; then
+            CAT="image"
+          elif [[ "$MIME" == application/pdf ]] || [[ "$EXT" =~ ^(pdf|doc|docx|xls|xlsx|ppt|pptx|txt)$ ]]; then
+            CAT="document"
+          else
+            CAT="other"
           fi
+          echo "CAT=$CAT" >> $GITHUB_ENV
+          echo "✅ دسته: $CAT"
+
+      - name: 💾 ذخیره‌سازی هوشمند (حفظ نام و فرمت)
+        run: |
+          # استخراج نام پایه (بدون پسوند) برای نام پوشه
+          BASE_NAME="${SAFE_NAME%.*}"
+          # اگر فایل بدون پسوند بود، کل نام به عنوان پایه در نظر گرفته شود
+          if [[ "$BASE_NAME" == "$SAFE_NAME" ]]; then
+            BASE_NAME="$SAFE_NAME"
+          fi
+          
+          FINAL_DIR="downloads/${{ env.CAT }}/$BASE_NAME"
+          mkdir -p "$FINAL_DIR"
+          
+          # تبدیل split_size به بایت
+          SPLIT_SIZE_RAW="${{ github.event.inputs.split_size }}"
+          if [[ "$SPLIT_SIZE_RAW" =~ ([0-9]+)m$ ]]; then
+            SPLIT_BYTES=$((${BASH_REMATCH[1]} * 1024 * 1024))
+          elif [[ "$SPLIT_SIZE_RAW" =~ ([0-9]+)g$ ]]; then
+            SPLIT_BYTES=$((${BASH_REMATCH[1]} * 1024 * 1024 * 1024))
+          else
+            SPLIT_BYTES=$(($SPLIT_SIZE_RAW))
+          fi
+          
+          NEED_SPLIT=false
+          if [[ $FILE_SIZE -gt $SPLIT_BYTES ]]; then
+            NEED_SPLIT=true
+          fi
+          
+          # حالت اول: بدون رمز و بدون نیاز به split → کپی مستقیم با نام کامل (همراه پسوند)
+          if [[ -z "${{ github.event.inputs.password }}" ]] && [[ "$NEED_SPLIT" == "false" ]]; then
+            cp "${{ env.SAFE_NAME }}" "$FINAL_DIR/${{ env.SAFE_NAME }}"
+            echo "✅ فایل مستقیماً با نام کامل ذخیره شد: $FINAL_DIR/${{ env.SAFE_NAME }}"
+          
+          # حالت دوم: با رمز ولی بدون نیاز به split → یک فایل BASE_NAME.7z (بدون پسوند شماره‌ای)
+          elif [[ -n "${{ github.event.inputs.password }}" ]] && [[ "$NEED_SPLIT" == "false" ]]; then
+            7z a -p"${{ github.event.inputs.password }}" -mhe=on -mx=3 "$FINAL_DIR/$BASE_NAME.7z" "${{ env.SAFE_NAME }}"
+            echo "✅ فایل رمزگذاری شده به صورت تک‌تکه با نام $BASE_NAME.7z ذخیره شد"
+          
+          # حالت سوم: نیاز به split (با یا بدون رمز) → آرشیو چندتکه archive.7z.001, ...
+          else
+            mkdir temp_archive
+            cp "${{ env.SAFE_NAME }}" "temp_archive/${{ env.SAFE_NAME }}"
+            cd temp_archive
+            ARCHIVE_PATH="../$FINAL_DIR/archive.7z"
+            if [[ -z "${{ github.event.inputs.password }}" ]]; then
+              7z a -mx=3 -v"${{ github.event.inputs.split_size }}" "$ARCHIVE_PATH" "${{ env.SAFE_NAME }}"
+            else
+              7z a -p"${{ github.event.inputs.password }}" -mhe=on -mx=3 -v"${{ github.event.inputs.split_size }}" "$ARCHIVE_PATH" "${{ env.SAFE_NAME }}"
+            fi
+            cd ..
+            rm -rf temp_archive
+            echo "✅ فایل در آرشیو چندتکه (archive.7z.001, ...) با نام اصلی درون آرشیو ذخیره شد"
+          fi
+          
+          ls -lh "$FINAL_DIR"
 
       - name: 📝 کامیت و پوش به مخزن
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add downloads/
-          if ! git diff --cached --quiet; then
-            git commit -m "Add multiple files via workflow (split by comma)"
-            git push
-          else
-            echo "Nothing to commit"
-          fi
+          git commit -m "Add file: ${{ env.SAFE_NAME }} (category: ${{ env.CAT }})" || echo "Nothing to commit"
+          git push
