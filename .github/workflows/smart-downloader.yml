@@ -18,6 +18,9 @@ on:
         type: string
         default: '95m'
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 permissions:
   contents: write
 
@@ -26,7 +29,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: 🔄 دریافت کد مخزن
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6     # ارتقا به نسخه پشتیبان Node.js 24
 
       - name: ⚙️ نصب ابزارها
         run: |
@@ -73,7 +76,7 @@ jobs:
         run: |
           # استخراج نام پایه (بدون پسوند) برای نام پوشه
           BASE_NAME="${SAFE_NAME%.*}"
-          # اگر فایل بدون پسوند بود (مثل برخی فایل‌ها) پس کل نام به عنوان پایه در نظر گرفته شود
+          # اگر فایل بدون پسوند بود، کل نام به عنوان پایه در نظر گرفته شود
           if [[ "$BASE_NAME" == "$SAFE_NAME" ]]; then
             BASE_NAME="$SAFE_NAME"
           fi
@@ -127,7 +130,7 @@ jobs:
       - name: 📝 کامیت و پوش به مخزن
         run: |
           git config user.name "github-actions[bot]"
-          git config.user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
           git add downloads/
           git commit -m "Add file: ${{ env.SAFE_NAME }} (category: ${{ env.CAT }})" || echo "Nothing to commit"
           git push
