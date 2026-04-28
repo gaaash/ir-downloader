@@ -71,7 +71,14 @@ jobs:
 
       - name: 💾 ذخیره‌سازی هوشمند (حفظ نام و فرمت)
         run: |
-          FINAL_DIR="downloads/${{ env.CAT }}/${{ env.SAFE_NAME }}"
+          # استخراج نام پایه (بدون پسوند) برای نام پوشه
+          BASE_NAME="${SAFE_NAME%.*}"
+          # اگر فایل بدون پسوند بود (مثل برخی فایل‌ها) پس کل نام به عنوان پایه در نظر گرفته شود
+          if [[ "$BASE_NAME" == "$SAFE_NAME" ]]; then
+            BASE_NAME="$SAFE_NAME"
+          fi
+          
+          FINAL_DIR="downloads/${{ env.CAT }}/$BASE_NAME"
           mkdir -p "$FINAL_DIR"
           
           # تبدیل split_size به بایت
@@ -89,17 +96,17 @@ jobs:
             NEED_SPLIT=true
           fi
           
-          # حالت اول: بدون رمز و بدون نیاز به split
+          # حالت اول: بدون رمز و بدون نیاز به split → کپی مستقیم با نام کامل (همراه پسوند)
           if [[ -z "${{ github.event.inputs.password }}" ]] && [[ "$NEED_SPLIT" == "false" ]]; then
             cp "${{ env.SAFE_NAME }}" "$FINAL_DIR/${{ env.SAFE_NAME }}"
-            echo "✅ فایل مستقیماً با نام اصلی ذخیره شد: $FINAL_DIR/${{ env.SAFE_NAME }}"
+            echo "✅ فایل مستقیماً با نام کامل ذخیره شد: $FINAL_DIR/${{ env.SAFE_NAME }}"
           
-          # حالت دوم: با رمز ولی بدون نیاز به split (تک‌تکه با نام اصلی)
+          # حالت دوم: با رمز ولی بدون نیاز به split → یک فایل BASE_NAME.7z (بدون پسوند شماره‌ای)
           elif [[ -n "${{ github.event.inputs.password }}" ]] && [[ "$NEED_SPLIT" == "false" ]]; then
-            7z a -p"${{ github.event.inputs.password }}" -mhe=on -mx=3 "$FINAL_DIR/${{ env.SAFE_NAME }}.7z" "${{ env.SAFE_NAME }}"
-            echo "✅ فایل رمزگذاری شده به صورت تک‌تکه با نام ${{ env.SAFE_NAME }}.7z ذخیره شد"
+            7z a -p"${{ github.event.inputs.password }}" -mhe=on -mx=3 "$FINAL_DIR/$BASE_NAME.7z" "${{ env.SAFE_NAME }}"
+            echo "✅ فایل رمزگذاری شده به صورت تک‌تکه با نام $BASE_NAME.7z ذخیره شد"
           
-          # حالت سوم: نیاز به split (با یا بدون رمز) → آرشیو چندتکه با命名 پیش‌فرض
+          # حالت سوم: نیاز به split (با یا بدون رمز) → آرشیو چندتکه archive.7z.001, ...
           else
             mkdir temp_archive
             cp "${{ env.SAFE_NAME }}" "temp_archive/${{ env.SAFE_NAME }}"
@@ -120,7 +127,7 @@ jobs:
       - name: 📝 کامیت و پوش به مخزن
         run: |
           git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config.user.email "github-actions[bot]@users.noreply.github.com"
           git add downloads/
           git commit -m "Add file: ${{ env.SAFE_NAME }} (category: ${{ env.CAT }})" || echo "Nothing to commit"
           git push
